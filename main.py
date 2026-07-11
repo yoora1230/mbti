@@ -1,52 +1,39 @@
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import plotly.express as px
-import pycountry
+import plotly.graph_objects as go
 import streamlit as st
 
 
 # ---------------------------------------------------------
-# 페이지 기본 설정
+# 기본 설정
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MBTI 세계 탐험대",
+    page_title="MBTI World Finder",
     page_icon="🌍",
     layout="wide",
 )
 
 MBTI_TYPES = [
-    "ISTJ", "ISFJ", "INFJ", "INTJ",
-    "ISTP", "ISFP", "INFP", "INTP",
-    "ESTP", "ESFP", "ENFP", "ENTP",
-    "ESTJ", "ESFJ", "ENFJ", "ENTJ",
+    "INTJ", "INTP", "ENTJ", "ENTP",
+    "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+    "ISTP", "ISFP", "ESTP", "ESFP",
 ]
 
-MBTI_EMOJI = {
-    "ISTJ": "📋", "ISFJ": "🤝", "INFJ": "🔮", "INTJ": "♟️",
-    "ISTP": "🛠️", "ISFP": "🎨", "INFP": "🌱", "INTP": "🧠",
-    "ESTP": "🏄", "ESFP": "🎉", "ENFP": "✨", "ENTP": "💡",
-    "ESTJ": "📣", "ESFJ": "💛", "ENFJ": "🌟", "ENTJ": "🚀",
+MBTI_COLORS = {
+    "INTJ": "#6C5CE7", "INTP": "#6C5CE7", "ENTJ": "#6C5CE7", "ENTP": "#6C5CE7",
+    "INFJ": "#00B894", "INFP": "#00B894", "ENFJ": "#00B894", "ENFP": "#00B894",
+    "ISTJ": "#0984E3", "ISFJ": "#0984E3", "ESTJ": "#0984E3", "ESFJ": "#0984E3",
+    "ISTP": "#E17055", "ISFP": "#E17055", "ESTP": "#E17055", "ESFP": "#E17055",
 }
 
-# pycountry에서 바로 찾기 어려운 국가 이름만 보정합니다.
-ISO3_OVERRIDES = {
-    "Bolivia": "BOL",
-    "Brunei": "BRN",
-    "Congo": "COG",
-    "Congo (Kinshasa)": "COD",
-    "Czech Republic": "CZE",
-    "Iran": "IRN",
-    "Laos": "LAO",
-    "Macedonia": "MKD",
-    "Moldova": "MDA",
-    "Russia": "RUS",
-    "South Korea": "KOR",
-    "Syria": "SYR",
-    "Tanzania": "TZA",
-    "Venezuela": "VEN",
-    "Vietnam": "VNM",
+MBTI_GROUPS = {
+    "분석가형": ["INTJ", "INTP", "ENTJ", "ENTP"],
+    "외교관형": ["INFJ", "INFP", "ENFJ", "ENFP"],
+    "관리자형": ["ISTJ", "ISFJ", "ESTJ", "ESFJ"],
+    "탐험가형": ["ISTP", "ISFP", "ESTP", "ESFP"],
 }
 
 st.markdown(
@@ -55,49 +42,43 @@ st.markdown(
         .block-container {
             padding-top: 2rem;
             padding-bottom: 3rem;
+            max-width: 1250px;
         }
         .hero {
             padding: 2rem 2.2rem;
             border-radius: 24px;
-            background: linear-gradient(135deg, #eef2ff 0%, #ecfeff 55%, #f0fdf4 100%);
-            border: 1px solid rgba(99, 102, 241, 0.16);
-            margin-bottom: 1.2rem;
+            background: linear-gradient(135deg, #6C5CE7 0%, #0984E3 100%);
+            color: white;
+            margin-bottom: 1.4rem;
+            box-shadow: 0 12px 30px rgba(70, 70, 160, 0.18);
         }
         .hero h1 {
             margin: 0;
             font-size: 2.45rem;
-            letter-spacing: -0.04em;
         }
         .hero p {
             margin: 0.7rem 0 0 0;
-            color: #475569;
             font-size: 1.05rem;
+            opacity: 0.92;
         }
-        .result-card {
-            padding: 1.35rem;
-            border-radius: 18px;
-            background: white;
-            border: 1px solid #e2e8f0;
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
-            min-height: 145px;
+        .notice {
+            border-left: 5px solid #6C5CE7;
+            background: rgba(108, 92, 231, 0.08);
+            padding: 0.9rem 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
         }
-        .result-label {
-            color: #64748b;
-            font-size: 0.88rem;
-            margin-bottom: 0.35rem;
+        div[data-testid="stMetric"] {
+            background: rgba(128, 128, 128, 0.07);
+            border: 1px solid rgba(128, 128, 128, 0.16);
+            padding: 1rem;
+            border-radius: 16px;
         }
-        .result-value {
-            font-size: 1.55rem;
-            font-weight: 800;
-            color: #0f172a;
-        }
-        .result-sub {
-            color: #64748b;
-            font-size: 0.88rem;
-            margin-top: 0.35rem;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #f8fafc;
+        .footer {
+            text-align: center;
+            opacity: 0.65;
+            margin-top: 2rem;
+            font-size: 0.9rem;
         }
     </style>
     """,
@@ -106,389 +87,412 @@ st.markdown(
 
 
 # ---------------------------------------------------------
-# 데이터 불러오기 및 검사
+# 데이터 불러오기
 # ---------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def load_data() -> pd.DataFrame:
-    """main.py와 같은 폴더의 CSV 파일을 읽고 검사합니다."""
-    csv_path = Path(__file__).with_name("countriesMBTI_16types.csv")
+@st.cache_data
+def load_mbti_data() -> pd.DataFrame:
+    """현재 폴더에서 MBTI 국가 데이터 CSV를 자동으로 찾는다."""
+    csv_files = list(Path(".").glob("*.csv"))
 
-    if not csv_path.exists():
-        raise FileNotFoundError(
-            "countriesMBTI_16types.csv 파일을 main.py와 같은 폴더에 넣어 주세요."
+    # 파일명에 countriesMBTI가 포함된 파일을 우선 탐색
+    csv_files.sort(
+        key=lambda path: (
+            "countriesmbti" not in path.name.lower(),
+            path.name.lower(),
         )
-
-    data = pd.read_csv(csv_path)
-    data.columns = data.columns.astype(str).str.strip()
+    )
 
     required_columns = {"Country", *MBTI_TYPES}
-    missing_columns = sorted(required_columns - set(data.columns))
-    if missing_columns:
-        raise ValueError(
-            "CSV에 필요한 열이 없습니다: " + ", ".join(missing_columns)
-        )
+    errors = []
 
-    data = data[["Country", *MBTI_TYPES]].copy()
-    data["Country"] = data["Country"].astype(str).str.strip()
+    for csv_path in csv_files:
+        for encoding in ("utf-8-sig", "utf-8", "cp949"):
+            try:
+                data = pd.read_csv(csv_path, encoding=encoding)
+                data.columns = [str(column).strip() for column in data.columns]
 
-    if data["Country"].eq("").any():
-        raise ValueError("Country 열에 빈 국가 이름이 있습니다.")
+                if required_columns.issubset(data.columns):
+                    cleaned = data[["Country", *MBTI_TYPES]].copy()
+                    cleaned["Country"] = cleaned["Country"].astype(str).str.strip()
 
-    for mbti in MBTI_TYPES:
-        data[mbti] = pd.to_numeric(data[mbti], errors="coerce")
+                    for mbti in MBTI_TYPES:
+                        cleaned[mbti] = pd.to_numeric(
+                            cleaned[mbti], errors="coerce"
+                        )
 
-    if data[MBTI_TYPES].isna().any().any():
-        raise ValueError("MBTI 비율 열에 숫자가 아닌 값 또는 빈칸이 있습니다.")
+                    cleaned = cleaned.dropna(subset=["Country", *MBTI_TYPES])
+                    cleaned = cleaned[cleaned["Country"] != ""]
+                    return cleaned.reset_index(drop=True)
 
-    # 현재 데이터는 0~1 사이의 비율입니다. 0~100 데이터가 들어오면 자동 변환합니다.
-    if data[MBTI_TYPES].to_numpy().max() > 1:
-        data[MBTI_TYPES] = data[MBTI_TYPES] / 100
+            except Exception as error:
+                errors.append(f"{csv_path.name}: {error}")
 
-    return data
-
-
-def country_to_iso3(country_name: str) -> Optional[str]:
-    """국가 이름을 세계 지도용 ISO-3 코드로 변환합니다."""
-    if country_name in ISO3_OVERRIDES:
-        return ISO3_OVERRIDES[country_name]
-
-    try:
-        return pycountry.countries.lookup(country_name).alpha_3
-    except LookupError:
-        return None
+    raise FileNotFoundError(
+        "MBTI 데이터 CSV를 찾지 못했습니다. "
+        "main.py와 같은 GitHub 폴더에 CSV 파일을 업로드해 주세요."
+    )
 
 
 try:
-    df = load_data()
-except (FileNotFoundError, ValueError, pd.errors.ParserError) as error:
-    st.error(f"데이터를 불러오지 못했습니다.\n\n{error}")
+    df = load_mbti_data()
+except Exception as error:
+    st.error(str(error))
     st.info(
-        "GitHub 저장소의 같은 위치에 main.py, requirements.txt, "
-        "countriesMBTI_16types.csv 파일을 함께 올려 주세요."
+        "CSV에는 Country 열과 16개 MBTI 열이 있어야 합니다. "
+        "예: Country, INFJ, ISFJ, INTP, ..."
     )
     st.stop()
 
 
+# 데이터가 0~1 비율이면 퍼센트로 변환하고,
+# 이미 0~100 값이면 그대로 사용한다.
+if df[MBTI_TYPES].max().max() <= 1.5:
+    percent_df = df.copy()
+    percent_df[MBTI_TYPES] = percent_df[MBTI_TYPES] * 100
+else:
+    percent_df = df.copy()
+
+
 # ---------------------------------------------------------
-# 제목 및 사이드바
+# 화면 상단
 # ---------------------------------------------------------
 st.markdown(
     """
     <div class="hero">
-        <h1>🌍 MBTI 세계 탐험대</h1>
-        <p>나와 같은 MBTI 유형의 비율이 높은 나라를 찾아보세요.</p>
+        <h1>🌍 MBTI World Finder</h1>
+        <p>나와 같은 MBTI 유형의 비율이 높은 나라를 세계 지도와 순위로 찾아보세요.</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
+st.markdown(
+    """
+    <div class="notice">
+        이 데이터에는 국가별 인구수가 없으므로, 실제 사람 수가 아닌
+        <b>각 나라에서 해당 MBTI가 차지하는 비율</b>을 기준으로 비교합니다.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ---------------------------------------------------------
+# 사이드바
+# ---------------------------------------------------------
 with st.sidebar:
-    st.header("🔎 탐색 설정")
+    st.header("🔎 MBTI 선택")
 
     selected_mbti = st.selectbox(
         "나의 MBTI",
         MBTI_TYPES,
-        index=MBTI_TYPES.index("INFP"),
+        index=MBTI_TYPES.index("ENFP"),
     )
 
-    top_n = st.slider(
+    ranking_count = st.slider(
         "순위에 표시할 국가 수",
         min_value=5,
-        max_value=min(30, len(df)),
-        value=min(10, len(df)),
+        max_value=min(30, len(percent_df)),
+        value=10,
         step=1,
     )
 
     st.divider()
+    st.subheader("MBTI 그룹")
+
+    selected_group = next(
+        group
+        for group, types in MBTI_GROUPS.items()
+        if selected_mbti in types
+    )
+    st.write(f"**{selected_mbti}**는 **{selected_group}**에 속합니다.")
+
     st.caption(
-        "이 사이트의 수치는 각 나라에서 해당 MBTI가 차지하는 비율입니다. "
-        "국가의 전체 인구를 반영한 실제 인원수 순위는 아닙니다."
+        "CSV 파일은 main.py와 같은 GitHub 저장소 폴더에 넣어 주세요."
     )
 
 
 # ---------------------------------------------------------
-# 선택한 MBTI 결과 계산
+# 선택 MBTI 분석
 # ---------------------------------------------------------
 ranking = (
-    df[["Country", selected_mbti]]
-    .rename(columns={selected_mbti: "Ratio"})
-    .sort_values("Ratio", ascending=False)
+    percent_df[["Country", selected_mbti]]
+    .sort_values(selected_mbti, ascending=False)
     .reset_index(drop=True)
 )
-ranking["Rank"] = ranking.index + 1
-ranking["Percent"] = ranking["Ratio"] * 100
+ranking.index = ranking.index + 1
+ranking.index.name = "순위"
 
-best = ranking.iloc[0]
-average_percent = ranking["Percent"].mean()
-median_percent = ranking["Percent"].median()
+top_country = ranking.iloc[0]["Country"]
+top_rate = ranking.iloc[0][selected_mbti]
+average_rate = ranking[selected_mbti].mean()
+median_rate = ranking[selected_mbti].median()
 
-korea_match = ranking.loc[ranking["Country"] == "South Korea"]
-if korea_match.empty:
-    korea_rank_text = "데이터 없음"
-    korea_percent_text = "한국 행을 찾지 못했어요"
-else:
-    korea_rank = int(korea_match.iloc[0]["Rank"])
-    korea_percent = float(korea_match.iloc[0]["Percent"])
-    korea_rank_text = f"{korea_rank}위"
-    korea_percent_text = f"{korea_percent:.2f}%"
+metric1, metric2, metric3, metric4 = st.columns(4)
 
-st.subheader(f"{MBTI_EMOJI[selected_mbti]} {selected_mbti} 결과")
+metric1.metric("🥇 비율이 가장 높은 나라", top_country)
+metric2.metric("📊 1위 국가 비율", f"{top_rate:.2f}%")
+metric3.metric("🌐 전체 국가 평균", f"{average_rate:.2f}%")
+metric4.metric("🗺️ 분석 국가 수", f"{len(percent_df)}개")
 
-card1, card2, card3, card4 = st.columns(4)
-with card1:
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <div class="result-label">가장 비율이 높은 나라</div>
-            <div class="result-value">🥇 {best['Country']}</div>
-            <div class="result-sub">{best['Percent']:.2f}%</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with card2:
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <div class="result-label">전체 국가 평균</div>
-            <div class="result-value">{average_percent:.2f}%</div>
-            <div class="result-sub">{len(ranking)}개 국가 기준</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with card3:
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <div class="result-label">중앙값</div>
-            <div class="result-value">{median_percent:.2f}%</div>
-            <div class="result-sub">국가별 비율의 가운데 값</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with card4:
-    st.markdown(
-        f"""
-        <div class="result-card">
-            <div class="result-label">대한민국 순위</div>
-            <div class="result-value">🇰🇷 {korea_rank_text}</div>
-            <div class="result-sub">{korea_percent_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-st.write("")
-
-# 탭은 보이지 않는 내용도 모두 계산하므로, 라디오 버튼으로 선택한 화면만 렌더링합니다.
-view = st.radio(
-    "보기 선택",
-    ["🏆 국가 순위", "🗺️ 세계 지도", "📊 나라 비교", "📄 전체 데이터"],
-    horizontal=True,
-    label_visibility="collapsed",
+# ---------------------------------------------------------
+# 지도와 상위 순위
+# ---------------------------------------------------------
+map_tab, ranking_tab, country_tab, compare_tab = st.tabs(
+    ["세계 지도", "국가 순위", "나라별 MBTI", "MBTI 비교"]
 )
 
+with map_tab:
+    st.subheader(f"{selected_mbti} 비율 세계 지도")
 
-# ---------------------------------------------------------
-# 국가 순위
-# ---------------------------------------------------------
-if view == "🏆 국가 순위":
-    top_df = ranking.head(top_n).sort_values("Percent", ascending=True)
+    map_df = ranking.reset_index()
 
-    bar_fig = px.bar(
-        top_df,
-        x="Percent",
-        y="Country",
-        orientation="h",
-        text="Percent",
-        labels={"Percent": "비율(%)", "Country": "국가"},
-        title=f"{selected_mbti} 비율 상위 {top_n}개 나라",
-        color="Percent",
-        color_continuous_scale="Blues",
-    )
-    bar_fig.update_traces(
-        texttemplate="%{text:.2f}%",
-        textposition="outside",
-        hovertemplate="<b>%{y}</b><br>비율: %{x:.2f}%<extra></extra>",
-    )
-    bar_fig.update_layout(
-        height=max(470, top_n * 34),
-        coloraxis_showscale=False,
-        margin=dict(l=10, r=30, t=60, b=10),
-        yaxis_title=None,
-    )
-    st.plotly_chart(
-        bar_fig,
-        width="stretch",
-        config={"displaylogo": False},
-    )
-
-    rank_table = ranking.head(top_n)[["Rank", "Country", "Percent"]].copy()
-    rank_table.columns = ["순위", "국가", f"{selected_mbti} 비율(%)"]
-
-    st.dataframe(
-        rank_table,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "순위": st.column_config.NumberColumn(format="%d위"),
-            f"{selected_mbti} 비율(%)": st.column_config.NumberColumn(format="%.2f%%"),
+    fig_map = px.choropleth(
+        map_df,
+        locations="Country",
+        locationmode="country names",
+        color=selected_mbti,
+        hover_name="Country",
+        hover_data={
+            selected_mbti: ":.2f",
+            "순위": True,
+            "Country": False,
         },
+        color_continuous_scale="Purples",
+        labels={selected_mbti: f"{selected_mbti} 비율(%)"},
     )
-
-    download_data = ranking[["Rank", "Country", "Percent"]].copy()
-    download_data.columns = ["Rank", "Country", f"{selected_mbti}_Percent"]
-    st.download_button(
-        label=f"⬇️ {selected_mbti} 전체 순위 CSV 다운로드",
-        data=download_data.to_csv(index=False).encode("utf-8-sig"),
-        file_name=f"{selected_mbti}_country_ranking.csv",
-        mime="text/csv",
+    fig_map.update_geos(
+        showframe=False,
+        showcoastlines=True,
+        projection_type="natural earth",
     )
-
-
-# ---------------------------------------------------------
-# 세계 지도
-# ---------------------------------------------------------
-elif view == "🗺️ 세계 지도":
-    with st.spinner("세계 지도를 준비하고 있습니다..."):
-        map_df = ranking.copy()
-        map_df["ISO3"] = map_df["Country"].map(country_to_iso3)
-        unmapped = map_df.loc[map_df["ISO3"].isna(), "Country"].tolist()
-        map_df = map_df.dropna(subset=["ISO3"])
-
-        map_fig = px.choropleth(
-            map_df,
-            locations="ISO3",
-            color="Percent",
-            hover_name="Country",
-            hover_data={"ISO3": False, "Percent": ":.2f"},
-            color_continuous_scale="Viridis",
-            labels={"Percent": f"{selected_mbti} 비율(%)"},
-            title=f"세계의 {selected_mbti} 비율",
-        )
-        map_fig.update_geos(
-            showcoastlines=True,
-            coastlinecolor="#94a3b8",
-            showland=True,
-            landcolor="#f1f5f9",
-            showframe=False,
-            projection_type="natural earth",
-        )
-        map_fig.update_layout(
-            height=620,
-            margin=dict(l=0, r=0, t=60, b=0),
-        )
-
-    st.plotly_chart(
-        map_fig,
-        width="stretch",
-        config={"displaylogo": False},
+    fig_map.update_layout(
+        height=580,
+        margin=dict(l=0, r=0, t=20, b=0),
+        coloraxis_colorbar_title=f"{selected_mbti}<br>비율(%)",
     )
-
-    if unmapped:
-        st.caption("지도에 표시되지 않은 국가: " + ", ".join(unmapped))
-
-
-# ---------------------------------------------------------
-# 나라 비교
-# ---------------------------------------------------------
-elif view == "📊 나라 비교":
-    default_countries = [
-        country
-        for country in ["South Korea", "Japan", "United States", "United Kingdom"]
-        if country in df["Country"].values
-    ]
-
-    selected_countries = st.multiselect(
-        "비교할 나라를 선택하세요",
-        options=sorted(df["Country"].tolist()),
-        default=default_countries,
-        max_selections=8,
-    )
-
-    if not selected_countries:
-        st.info("비교할 나라를 한 곳 이상 선택해 주세요.")
-    else:
-        compare_df = ranking[ranking["Country"].isin(selected_countries)].copy()
-        compare_df = compare_df.sort_values("Percent", ascending=False)
-
-        compare_fig = px.bar(
-            compare_df,
-            x="Country",
-            y="Percent",
-            text="Percent",
-            labels={"Country": "국가", "Percent": "비율(%)"},
-            title=f"선택한 나라의 {selected_mbti} 비율 비교",
-            color="Country",
-        )
-        compare_fig.update_traces(
-            texttemplate="%{text:.2f}%",
-            textposition="outside",
-            hovertemplate="<b>%{x}</b><br>비율: %{y:.2f}%<extra></extra>",
-        )
-        compare_fig.update_layout(
-            height=500,
-            showlegend=False,
-            margin=dict(l=10, r=10, t=60, b=10),
-        )
-        st.plotly_chart(
-            compare_fig,
-            width="stretch",
-            config={"displaylogo": False},
-        )
-
-        compare_table = compare_df[["Rank", "Country", "Percent"]].copy()
-        compare_table.columns = ["세계 순위", "국가", f"{selected_mbti} 비율(%)"]
-        st.dataframe(
-            compare_table,
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "세계 순위": st.column_config.NumberColumn(format="%d위"),
-                f"{selected_mbti} 비율(%)": st.column_config.NumberColumn(format="%.2f%%"),
-            },
-        )
-
-
-# ---------------------------------------------------------
-# 전체 데이터
-# ---------------------------------------------------------
-else:
-    search_country = st.text_input(
-        "국가 이름 검색",
-        placeholder="예: Korea, Japan, Canada",
-    )
-
-    display_df = df.copy()
-    if search_country.strip():
-        display_df = display_df[
-            display_df["Country"].str.contains(
-                search_country.strip(), case=False, na=False
-            )
-        ]
-
-    percent_df = display_df.copy()
-    percent_df[MBTI_TYPES] = percent_df[MBTI_TYPES] * 100
-
-    st.dataframe(
-        percent_df,
-        hide_index=True,
-        width="stretch",
-        column_config={
-            mbti: st.column_config.NumberColumn(format="%.2f%%")
-            for mbti in MBTI_TYPES
-        },
-    )
+    st.plotly_chart(fig_map, use_container_width=True)
 
     st.caption(
-        f"현재 {len(display_df)}개 국가를 표시하고 있습니다. "
-        "표의 MBTI 값은 보기 쉽게 백분율로 변환했습니다."
+        "일부 국가명은 지도 서비스의 표준 국가명과 다르면 색칠되지 않을 수 있습니다."
     )
 
-st.divider()
-st.caption(
-    "💡 해석할 때 주의: 이 데이터는 국가별 MBTI 비율 데이터이며, "
-    "MBTI는 사람의 성격 전체를 완전히 설명하는 절대적인 기준은 아닙니다."
+
+with ranking_tab:
+    left, right = st.columns([1.2, 1])
+
+    with left:
+        st.subheader(f"{selected_mbti} 상위 {ranking_count}개 국가")
+
+        top_n = ranking.head(ranking_count).sort_values(
+            selected_mbti, ascending=True
+        )
+
+        fig_bar = px.bar(
+            top_n.reset_index(),
+            x=selected_mbti,
+            y="Country",
+            orientation="h",
+            text=selected_mbti,
+            labels={
+                selected_mbti: f"{selected_mbti} 비율(%)",
+                "Country": "국가",
+            },
+        )
+        fig_bar.update_traces(
+            texttemplate="%{text:.2f}%",
+            textposition="outside",
+            marker_color=MBTI_COLORS[selected_mbti],
+        )
+        fig_bar.update_layout(
+            height=max(430, ranking_count * 38),
+            showlegend=False,
+            margin=dict(l=0, r=30, t=10, b=0),
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+    with right:
+        st.subheader("전체 순위표")
+
+        display_ranking = ranking.copy()
+        display_ranking[selected_mbti] = display_ranking[selected_mbti].map(
+            lambda value: f"{value:.2f}%"
+        )
+        display_ranking = display_ranking.rename(
+            columns={
+                "Country": "국가",
+                selected_mbti: f"{selected_mbti} 비율",
+            }
+        )
+
+        st.dataframe(
+            display_ranking,
+            use_container_width=True,
+            height=470,
+        )
+
+        csv_download = ranking.reset_index().to_csv(
+            index=False, encoding="utf-8-sig"
+        )
+        st.download_button(
+            "📥 순위 CSV 다운로드",
+            data=csv_download,
+            file_name=f"{selected_mbti}_country_ranking.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
+with country_tab:
+    st.subheader("한 나라의 MBTI 분포 살펴보기")
+
+    selected_country = st.selectbox(
+        "나라 선택",
+        sorted(percent_df["Country"].unique()),
+    )
+
+    country_row = percent_df.loc[
+        percent_df["Country"] == selected_country, MBTI_TYPES
+    ].iloc[0]
+
+    country_profile = (
+        country_row.rename_axis("MBTI")
+        .reset_index(name="비율")
+        .sort_values("비율", ascending=False)
+    )
+
+    country_top_mbti = country_profile.iloc[0]["MBTI"]
+    country_top_rate = country_profile.iloc[0]["비율"]
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.metric("가장 높은 MBTI", country_top_mbti)
+        st.metric("해당 비율", f"{country_top_rate:.2f}%")
+        st.metric(
+            f"{selected_mbti} 국가 순위",
+            f"{ranking.index[ranking['Country'] == selected_country][0]}위",
+        )
+
+        table_profile = country_profile.copy()
+        table_profile["비율"] = table_profile["비율"].map(
+            lambda value: f"{value:.2f}%"
+        )
+        st.dataframe(
+            table_profile,
+            hide_index=True,
+            use_container_width=True,
+            height=380,
+        )
+
+    with col2:
+        fig_country = px.bar(
+            country_profile.sort_values("비율"),
+            x="비율",
+            y="MBTI",
+            orientation="h",
+            text="비율",
+            title=f"{selected_country}의 MBTI 분포",
+        )
+        fig_country.update_traces(
+            texttemplate="%{text:.2f}%",
+            textposition="outside",
+        )
+        fig_country.update_layout(
+            height=580,
+            showlegend=False,
+            margin=dict(l=0, r=30, t=50, b=0),
+            xaxis_title="비율(%)",
+            yaxis_title="MBTI",
+        )
+        st.plotly_chart(fig_country, use_container_width=True)
+
+
+with compare_tab:
+    st.subheader("두 MBTI가 많은 나라 비교하기")
+
+    compare_col1, compare_col2 = st.columns(2)
+
+    with compare_col1:
+        mbti_x = st.selectbox(
+            "첫 번째 MBTI",
+            MBTI_TYPES,
+            index=MBTI_TYPES.index(selected_mbti),
+            key="mbti_x",
+        )
+
+    with compare_col2:
+        default_y = "INFP" if selected_mbti != "INFP" else "ENTP"
+        mbti_y = st.selectbox(
+            "두 번째 MBTI",
+            MBTI_TYPES,
+            index=MBTI_TYPES.index(default_y),
+            key="mbti_y",
+        )
+
+    compare_df = percent_df[["Country", mbti_x, mbti_y]].copy()
+    compare_df["차이"] = compare_df[mbti_x] - compare_df[mbti_y]
+
+    fig_scatter = px.scatter(
+        compare_df,
+        x=mbti_x,
+        y=mbti_y,
+        hover_name="Country",
+        hover_data={"차이": ":.2f"},
+        labels={
+            mbti_x: f"{mbti_x} 비율(%)",
+            mbti_y: f"{mbti_y} 비율(%)",
+        },
+        title=f"{mbti_x}와 {mbti_y} 국가별 비율 비교",
+    )
+
+    max_axis = max(
+        compare_df[mbti_x].max(),
+        compare_df[mbti_y].max(),
+    ) * 1.05
+
+    fig_scatter.add_trace(
+        go.Scatter(
+            x=[0, max_axis],
+            y=[0, max_axis],
+            mode="lines",
+            line=dict(dash="dash", color="gray"),
+            name="두 비율이 같음",
+            hoverinfo="skip",
+        )
+    )
+    fig_scatter.update_layout(
+        height=560,
+        margin=dict(l=0, r=0, t=60, b=0),
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+    diff_col1, diff_col2 = st.columns(2)
+
+    with diff_col1:
+        st.markdown(f"#### {mbti_x}가 상대적으로 더 높은 나라")
+        x_higher = compare_df.nlargest(5, "차이")[
+            ["Country", mbti_x, mbti_y, "차이"]
+        ].copy()
+        x_higher.columns = ["국가", mbti_x, mbti_y, "비율 차이"]
+        st.dataframe(x_higher, hide_index=True, use_container_width=True)
+
+    with diff_col2:
+        st.markdown(f"#### {mbti_y}가 상대적으로 더 높은 나라")
+        y_higher = compare_df.nsmallest(5, "차이")[
+            ["Country", mbti_x, mbti_y, "차이"]
+        ].copy()
+        y_higher["차이"] = -y_higher["차이"]
+        y_higher.columns = ["국가", mbti_x, mbti_y, "비율 차이"]
+        st.dataframe(y_higher, hide_index=True, use_container_width=True)
+
+
+st.markdown(
+    """
+    <div class="footer">
+        MBTI World Finder · Streamlit으로 제작
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
