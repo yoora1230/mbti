@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import plotly.express as px
@@ -7,7 +8,7 @@ import streamlit as st
 
 
 # ---------------------------------------------------------
-# 기본 설정
+# 페이지 기본 설정
 # ---------------------------------------------------------
 st.set_page_config(
     page_title="MBTI 세계 탐험대",
@@ -22,27 +23,30 @@ MBTI_TYPES = [
     "ESTJ", "ESFJ", "ENFJ", "ENTJ",
 ]
 
-# pycountry가 바로 인식하기 어려운 국가 이름만 따로 지정합니다.
-ISO3_OVERRIDES = {
-    "Congo": "COG",
-    "Congo (Kinshasa)": "COD",
-    "South Korea": "KOR",
-    "Macedonia": "MKD",
-    "Russia": "RUS",
-    "Laos": "LAO",
-    "Moldova": "MDA",
-    "Tanzania": "TZA",
-    "Vietnam": "VNM",
-    "Syria": "SYR",
-    "Brunei": "BRN",
-    "Czech Republic": "CZE",
-}
-
 MBTI_EMOJI = {
     "ISTJ": "📋", "ISFJ": "🤝", "INFJ": "🔮", "INTJ": "♟️",
     "ISTP": "🛠️", "ISFP": "🎨", "INFP": "🌱", "INTP": "🧠",
     "ESTP": "🏄", "ESFP": "🎉", "ENFP": "✨", "ENTP": "💡",
     "ESTJ": "📣", "ESFJ": "💛", "ENFJ": "🌟", "ENTJ": "🚀",
+}
+
+# pycountry에서 바로 찾기 어려운 국가 이름만 보정합니다.
+ISO3_OVERRIDES = {
+    "Bolivia": "BOL",
+    "Brunei": "BRN",
+    "Congo": "COG",
+    "Congo (Kinshasa)": "COD",
+    "Czech Republic": "CZE",
+    "Iran": "IRN",
+    "Laos": "LAO",
+    "Macedonia": "MKD",
+    "Moldova": "MDA",
+    "Russia": "RUS",
+    "South Korea": "KOR",
+    "Syria": "SYR",
+    "Tanzania": "TZA",
+    "Venezuela": "VEN",
+    "Vietnam": "VNM",
 }
 
 st.markdown(
@@ -104,9 +108,9 @@ st.markdown(
 # ---------------------------------------------------------
 # 데이터 불러오기 및 검사
 # ---------------------------------------------------------
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_data() -> pd.DataFrame:
-    """GitHub 저장소에서 main.py와 같은 폴더의 CSV를 불러옵니다."""
+    """main.py와 같은 폴더의 CSV 파일을 읽고 검사합니다."""
     csv_path = Path(__file__).with_name("countriesMBTI_16types.csv")
 
     if not csv_path.exists():
@@ -115,7 +119,7 @@ def load_data() -> pd.DataFrame:
         )
 
     data = pd.read_csv(csv_path)
-    data.columns = data.columns.str.strip()
+    data.columns = data.columns.astype(str).str.strip()
 
     required_columns = {"Country", *MBTI_TYPES}
     missing_columns = sorted(required_columns - set(data.columns))
@@ -127,17 +131,24 @@ def load_data() -> pd.DataFrame:
     data = data[["Country", *MBTI_TYPES]].copy()
     data["Country"] = data["Country"].astype(str).str.strip()
 
+    if data["Country"].eq("").any():
+        raise ValueError("Country 열에 빈 국가 이름이 있습니다.")
+
     for mbti in MBTI_TYPES:
         data[mbti] = pd.to_numeric(data[mbti], errors="coerce")
 
     if data[MBTI_TYPES].isna().any().any():
         raise ValueError("MBTI 비율 열에 숫자가 아닌 값 또는 빈칸이 있습니다.")
 
+    # 현재 데이터는 0~1 사이의 비율입니다. 0~100 데이터가 들어오면 자동 변환합니다.
+    if data[MBTI_TYPES].to_numpy().max() > 1:
+        data[MBTI_TYPES] = data[MBTI_TYPES] / 100
+
     return data
 
 
-def country_to_iso3(country_name: str) -> str | None:
-    """국가 이름을 세계 지도에서 사용할 ISO-3 코드로 바꿉니다."""
+def country_to_iso3(country_name: str) -> Optional[str]:
+    """국가 이름을 세계 지도용 ISO-3 코드로 변환합니다."""
     if country_name in ISO3_OVERRIDES:
         return ISO3_OVERRIDES[country_name]
 
@@ -183,8 +194,8 @@ with st.sidebar:
     top_n = st.slider(
         "순위에 표시할 국가 수",
         min_value=5,
-        max_value=30,
-        value=10,
+        max_value=min(30, len(df)),
+        value=min(10, len(df)),
         step=1,
     )
 
@@ -241,7 +252,7 @@ with card2:
         <div class="result-card">
             <div class="result-label">전체 국가 평균</div>
             <div class="result-value">{average_percent:.2f}%</div>
-            <div class="result-sub">158개 국가 기준</div>
+            <div class="result-sub">{len(ranking)}개 국가 기준</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -271,15 +282,19 @@ with card4:
 
 st.write("")
 
-
-# ---------------------------------------------------------
-# 탭별 시각화
-# ---------------------------------------------------------
-tab_rank, tab_map, tab_compare, tab_data = st.tabs(
-    ["🏆 국가 순위", "🗺️ 세계 지도", "📊 나라 비교", "📄 전체 데이터"]
+# 탭은 보이지 않는 내용도 모두 계산하므로, 라디오 버튼으로 선택한 화면만 렌더링합니다.
+view = st.radio(
+    "보기 선택",
+    ["🏆 국가 순위", "🗺️ 세계 지도", "📊 나라 비교", "📄 전체 데이터"],
+    horizontal=True,
+    label_visibility="collapsed",
 )
 
-with tab_rank:
+
+# ---------------------------------------------------------
+# 국가 순위
+# ---------------------------------------------------------
+if view == "🏆 국가 순위":
     top_df = ranking.head(top_n).sort_values("Percent", ascending=True)
 
     bar_fig = px.bar(
@@ -304,7 +319,11 @@ with tab_rank:
         margin=dict(l=10, r=30, t=60, b=10),
         yaxis_title=None,
     )
-    st.plotly_chart(bar_fig, use_container_width=True)
+    st.plotly_chart(
+        bar_fig,
+        width="stretch",
+        config={"displaylogo": False},
+    )
 
     rank_table = ranking.head(top_n)[["Rank", "Country", "Percent"]].copy()
     rank_table.columns = ["순위", "국가", f"{selected_mbti} 비율(%)"]
@@ -312,7 +331,7 @@ with tab_rank:
     st.dataframe(
         rank_table,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "순위": st.column_config.NumberColumn(format="%d위"),
             f"{selected_mbti} 비율(%)": st.column_config.NumberColumn(format="%.2f%%"),
@@ -328,40 +347,54 @@ with tab_rank:
         mime="text/csv",
     )
 
-with tab_map:
-    map_df = ranking.copy()
-    map_df["ISO3"] = map_df["Country"].apply(country_to_iso3)
-    unmapped = map_df.loc[map_df["ISO3"].isna(), "Country"].tolist()
-    map_df = map_df.dropna(subset=["ISO3"])
 
-    map_fig = px.choropleth(
-        map_df,
-        locations="ISO3",
-        color="Percent",
-        hover_name="Country",
-        hover_data={"ISO3": False, "Percent": ":.2f"},
-        color_continuous_scale="Viridis",
-        labels={"Percent": f"{selected_mbti} 비율(%)"},
-        title=f"세계의 {selected_mbti} 비율",
+# ---------------------------------------------------------
+# 세계 지도
+# ---------------------------------------------------------
+elif view == "🗺️ 세계 지도":
+    with st.spinner("세계 지도를 준비하고 있습니다..."):
+        map_df = ranking.copy()
+        map_df["ISO3"] = map_df["Country"].map(country_to_iso3)
+        unmapped = map_df.loc[map_df["ISO3"].isna(), "Country"].tolist()
+        map_df = map_df.dropna(subset=["ISO3"])
+
+        map_fig = px.choropleth(
+            map_df,
+            locations="ISO3",
+            color="Percent",
+            hover_name="Country",
+            hover_data={"ISO3": False, "Percent": ":.2f"},
+            color_continuous_scale="Viridis",
+            labels={"Percent": f"{selected_mbti} 비율(%)"},
+            title=f"세계의 {selected_mbti} 비율",
+        )
+        map_fig.update_geos(
+            showcoastlines=True,
+            coastlinecolor="#94a3b8",
+            showland=True,
+            landcolor="#f1f5f9",
+            showframe=False,
+            projection_type="natural earth",
+        )
+        map_fig.update_layout(
+            height=620,
+            margin=dict(l=0, r=0, t=60, b=0),
+        )
+
+    st.plotly_chart(
+        map_fig,
+        width="stretch",
+        config={"displaylogo": False},
     )
-    map_fig.update_geos(
-        showcoastlines=True,
-        coastlinecolor="#94a3b8",
-        showland=True,
-        landcolor="#f1f5f9",
-        showframe=False,
-        projection_type="natural earth",
-    )
-    map_fig.update_layout(
-        height=620,
-        margin=dict(l=0, r=0, t=60, b=0),
-    )
-    st.plotly_chart(map_fig, use_container_width=True)
 
     if unmapped:
         st.caption("지도에 표시되지 않은 국가: " + ", ".join(unmapped))
 
-with tab_compare:
+
+# ---------------------------------------------------------
+# 나라 비교
+# ---------------------------------------------------------
+elif view == "📊 나라 비교":
     default_countries = [
         country
         for country in ["South Korea", "Japan", "United States", "United Kingdom"]
@@ -400,21 +433,29 @@ with tab_compare:
             showlegend=False,
             margin=dict(l=10, r=10, t=60, b=10),
         )
-        st.plotly_chart(compare_fig, use_container_width=True)
+        st.plotly_chart(
+            compare_fig,
+            width="stretch",
+            config={"displaylogo": False},
+        )
 
         compare_table = compare_df[["Rank", "Country", "Percent"]].copy()
         compare_table.columns = ["세계 순위", "국가", f"{selected_mbti} 비율(%)"]
         st.dataframe(
             compare_table,
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "세계 순위": st.column_config.NumberColumn(format="%d위"),
                 f"{selected_mbti} 비율(%)": st.column_config.NumberColumn(format="%.2f%%"),
             },
         )
 
-with tab_data:
+
+# ---------------------------------------------------------
+# 전체 데이터
+# ---------------------------------------------------------
+else:
     search_country = st.text_input(
         "국가 이름 검색",
         placeholder="예: Korea, Japan, Canada",
@@ -434,7 +475,7 @@ with tab_data:
     st.dataframe(
         percent_df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             mbti: st.column_config.NumberColumn(format="%.2f%%")
             for mbti in MBTI_TYPES
